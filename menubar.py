@@ -163,7 +163,7 @@ class DashboardView(NSView):
         vals = list(hist)
         if not vals:
             return
-        slots = max(12, min(28, int(w / 7)))
+        slots = max(10, min(20, int(w / 10)))
         bucket = max(1, len(vals) // slots)
         reduced = [
             max(vals[i:i + bucket], default=0.0)
@@ -171,19 +171,41 @@ class DashboardView(NSView):
         ][-slots:]
         mx = max(max(reduced), 0.001)
         count = len(reduced)
-        gap = 2.0
-        bar_w = max(3.0, (w - gap * (count - 1)) / count)
-        faded = color.colorWithAlphaComponent_(0.22)
+        gap = 3.0
+        bar_w = max(4.0, (w - gap * (count - 1)) / count)
+        track = NSColor.colorWithCalibratedWhite_alpha_(0.86, 1.0)
+        baseline = NSColor.colorWithCalibratedWhite_alpha_(0.76, 1.0)
         for idx, val in enumerate(reduced):
-            bar_h = max(2.0, (val / mx) * h)
+            ratio = max(0.0, min(1.0, val / mx))
+            bar_h = max(2.5, ratio * h)
             px = x + idx * (bar_w + gap)
-            py = y
-            base = self._rounded_rect(NSMakeRect(px, py, bar_w, h), 1.2)
-            NSColor.colorWithWhite_alpha_(0.92, 1.0).setFill()
+            base = self._rounded_rect(NSMakeRect(px, y, bar_w, h), 1.8)
+            track.setFill()
             base.fill()
-            fg = self._rounded_rect(NSMakeRect(px, py, bar_w, bar_h), 1.2)
-            faded.setFill()
+
+            # Make newer bars easier to scan by increasing opacity toward the right.
+            age = idx / max(count - 1, 1)
+            alpha = 0.35 + age * 0.55
+            fg = self._rounded_rect(NSMakeRect(px, y, bar_w, bar_h), 1.8)
+            color.colorWithAlphaComponent_(alpha).setFill()
             fg.fill()
+
+            NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.22).setStroke()
+            fg.setLineWidth_(0.6)
+            fg.stroke()
+
+            if idx == count - 1:
+                color.colorWithAlphaComponent_(0.95).setStroke()
+                fg.setLineWidth_(1.0)
+                fg.stroke()
+
+        baseline_y = y + 0.5
+        baseline_path = NSBezierPath.bezierPath()
+        baseline_path.moveToPoint_(NSPoint(x, baseline_y))
+        baseline_path.lineToPoint_(NSPoint(x + w, baseline_y))
+        baseline.setStroke()
+        baseline_path.setLineWidth_(1.0)
+        baseline_path.stroke()
 
     @objc.python_method
     def _draw_card(self, rect, item: dict) -> None:
