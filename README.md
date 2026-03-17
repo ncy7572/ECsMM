@@ -1,8 +1,80 @@
 # macmonitor
 
-A lightweight, macOS system (Mac silicon M-Series) resource monitor for the terminal.
+A lightweight macOS system resource monitor for Apple Silicon Macs, with two ways to run it:
+
+- `CLI mode`: a full terminal dashboard for CPU, GPU, memory, swap, and network activity
+- `Menubar mode`: a compact macOS status bar app that shows live CPU, GPU, and network activity
+
+The project includes shell scripts in [`run.sh`](/Users/cyni/Playground/ECsMM/run.sh) so you can start either mode quickly.
 
 ![macmonitor screenshot](assets/screenshot.png)
+
+## Quick Start
+
+### Install dependencies
+
+- CLI mode needs `rich` and `psutil`
+- Menubar mode also needs `pyobjc-framework-Cocoa`
+
+```bash
+pip install -r requirements.txt
+```
+
+Or install manually:
+
+```bash
+pip install rich psutil pyobjc-framework-Cocoa
+```
+
+### Use the shell script
+
+[`run.sh`](/Users/cyni/Playground/ECsMM/run.sh) is the main entry point:
+
+```bash
+./run.sh start_cli
+./run.sh start_menubar
+./run.sh stop_menubar
+./run.sh restart_menubar
+./run.sh status_menubar
+./run.sh logs_menubar
+```
+
+Default behavior:
+
+- `./run.sh` starts `menubar.py`
+- the script requests `sudo` so GPU usage can be collected via `powermetrics`
+
+## Two Modes
+
+### CLI mode
+
+CLI mode runs [`macmonitor.py`](/Users/cyni/Playground/ECsMM/macmonitor.py) in the current terminal and shows:
+
+- CPU usage with chip name
+- GPU usage
+- memory usage
+- swap usage
+- network upload and download
+- rolling history bars for each metric
+
+Run it with the shell script:
+
+```bash
+./run.sh start_cli
+```
+
+Or run the Python script directly:
+
+```bash
+python3 macmonitor.py
+sudo python3 macmonitor.py
+```
+
+Notes:
+
+- `sudo` is recommended if you want GPU metrics
+- without `sudo`, CPU, memory, swap, and network still work
+- quit with `Ctrl-C`
 
 ```
   macmonitor   macOS resource monitor   11:02:33
@@ -34,110 +106,103 @@ A lightweight, macOS system (Mac silicon M-Series) resource monitor for the term
   Ctrl-C to quit  ·  refreshes every 3s
 ```
 
+### Menubar mode
+
+Menubar mode runs [`menubar.py`](/Users/cyni/Playground/ECsMM/menubar.py) as a macOS status item with no Dock icon.
+
+It shows three compact activity glyphs in the menu bar:
+
+- CPU
+- GPU
+- NET
+
+Clicking the status item opens a menu with the current values and a quit action.
+
+Run it with the shell script:
+
+```bash
+./run.sh start_menubar
+./run.sh status_menubar
+./run.sh logs_menubar
+./run.sh stop_menubar
+```
+
+Or run the Python script directly:
+
+```bash
+python3 menubar.py
+```
+
+If you start menubar mode with [`run.sh`](/Users/cyni/Playground/ECsMM/run.sh), you do not need to run `sudo -v` manually. The script already does that for you.
+
+Use:
+
+```bash
+./run.sh start_menubar
+```
+
+If you launch [`menubar.py`](/Users/cyni/Playground/ECsMM/menubar.py) directly and want GPU data, cache `sudo` first:
+
+```bash
+sudo -v
+python3 menubar.py
+```
+
+![macmonitor menubar screenshot](assets/screenshot2.png)
+
 ## Features
 
-- **CPU** — overall usage % with chip model name (e.g. M3 Pro)
-- **GPU** — hardware active residency % via `powermetrics` (requires sudo)
-- **Memory** — used / total in GB; percentage based on `total − available` (includes compressed memory, consistent with macOS Activity Monitor)
-- **Swap** — dedicated swap usage bar; subtitle percentage color reflects macOS memory pressure level
-- **Network Upload / Download** — live bytes/s, auto-scales to the peak seen in the rolling history window
-- **Per-bar visibility** — each panel can be shown or hidden in `config.json`
-- **Gradient dot bars** — each bar uses `■` characters with a bright leading edge
-- **Sparkline history** — 80-sample rolling chart below every bar
-- Refreshes every **3 seconds**; runs in full-screen terminal mode
+- CPU usage with Apple chip model name
+- GPU active residency from `powermetrics`
+- memory usage shown as used / total and percentage
+- swap usage with memory pressure color feedback
+- network upload and download rates
+- configurable panel visibility in [`config.json`](/Users/cyni/Playground/ECsMM/config.json)
+- rolling sparkline history
+- shell script helpers for launching and managing menubar mode
 
-## Requirements
+## Why `sudo` Is Needed For GPU
 
-- macOS (Apple Silicon recommended; Intel supported)
-- Python 3.10+
+GPU utilization is read from Apple's `powermetrics` tool, which requires root access.
 
-```
-pip install rich psutil
-```
+Without `sudo`:
 
-## Usage
+- GPU shows as unavailable
+- CPU, memory, swap, and network still work normally
 
-```bash
-# CPU · Memory · Network  (no special permissions needed)
-python3 macmonitor.py
-
-# + GPU  (requires sudo for powermetrics)
-sudo python3 macmonitor.py
-```
-
-Press `Ctrl-C` to quit.
-
-### Why sudo for GPU?
-
-GPU utilisation is read from Apple's `powermetrics` tool, which requires root access. Without sudo, the GPU panel shows `N/A (needs sudo)` and everything else works normally.
-
-To avoid typing your password repeatedly you can pre-cache sudo credentials in a separate terminal:
+To avoid repeated password prompts:
 
 ```bash
-sudo -v        # caches credentials for ~5 minutes (default)
+sudo -v
 ```
 
-Then run `python3 macmonitor.py` without sudo — it will use `sudo -n` (non-interactive) while credentials are still cached.
-
-## How it works
-
-| Component | Source | Notes |
-|-----------|--------|-------|
-| `PowerMetrics` | `sudo powermetrics --samplers gpu_power` | Background thread; parses GPU HW active residency from stdout |
-| `Monitor` | `psutil` + `sysctl kern.memorystatus_vm_pressure_level` | Collects CPU %, memory, swap, memory pressure level, and net I/O on each tick |
-| `dot_bar()` | rendering | Builds a `rich.Text` of `■` characters; first 35 % at normal brightness, last 65 % bold (bright tip) |
-| `sparkline()` | rendering | Maps the last 80 values to `▁▂▃▄▅▆▇█` scaled to the rolling max |
-| `build_screen()` | rendering | Composes all panels into a `rich.Group` rendered via `rich.Live` |
-
-### Memory percentage
-
-macOS memory is reported differently from Linux. `psutil.virtual_memory().used` only counts **active + wired** pages; the `percent` field uses `(total − available) / total`, which also includes **cached/inactive** and **compressed** pages. macmonitor uses `total − available` for both the GB label and the percentage so the two numbers are always consistent and match Activity Monitor.
-
-### Swap and pressure
-
-The swap panel shows:
-
-- **swap used / total** from `psutil.swap_memory()`
-- **pressure level** from `sysctl kern.memorystatus_vm_pressure_level`, encoded by the subtitle percentage color
-
-Pressure uses the standard macOS levels:
-
-- normal: swap percentage uses the panel's normal color
-- warning: swap percentage turns orange
-- critical: swap percentage turns red
-
-### Network scaling
-
-There is no theoretical maximum for network throughput, so the progress bar scales **relative to the highest value seen** in the 80-sample history window. The sparkline uses the same scale. The raw bytes/s value is always shown as the subtitle.
+The monitor then uses cached `sudo` credentials while they remain valid.
 
 ## Configuration
 
-Edit `config.json` in the project directory — no Python knowledge required.
-Changes take effect on the next run.
+Edit [`config.json`](/Users/cyni/Playground/ECsMM/config.json). Changes apply on the next launch.
 
 ```json
 {
   "interval": 3.0,
-  "history":  80,
-  "dot":      "■",
-
+  "history": 80,
+  "dot": "■",
   "show": {
-    "cpu":  true,
-    "gpu":  true,
-    "mem":  true,
+    "cpu": true,
+    "gpu": true,
+    "mem": true,
     "swap": true,
-    "up":   true,
-    "dn":   true
+    "up": true,
+    "dn": true
   },
-
   "colors": {
-    "cpu":       "green3",
-    "gpu":       "dark_orange",
-    "mem":       "gold1",
-    "swap":      "khaki3",
-    "up":        "medium_purple1",
-    "dn":        "cyan1",
-    "border":    "grey35",
+    "cpu": "green3",
+    "gpu": "dark_orange",
+    "mem": "gold1",
+    "swap": "khaki3",
+    "up": "medium_purple1",
+    "dn": "cyan1",
+    "border": "grey35",
     "dot_empty": "grey15"
   }
 }
@@ -145,23 +210,42 @@ Changes take effect on the next run.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `interval` | float | `3.0` | Seconds between refreshes (minimum `0.5`) |
-| `history` | int | `80` | Chart points kept per metric (~4 min at 3 s) |
-| `dot` | string | `"■"` | Bar character — try `"●"`, `"▪"`, `"•"` |
-| `show.*` | bool | `true` | Show or hide individual panels: `cpu`, `gpu`, `mem`, `swap`, `up`, `dn` |
-| `colors.*` | string | — | [Rich colour name](https://rich.readthedocs.io/en/latest/appendix/colors.html) for each metric |
+| `interval` | float | `3.0` | Seconds between refreshes, minimum `0.5` |
+| `history` | int | `80` | Samples kept per metric |
+| `dot` | string | `"■"` | Bar character |
+| `show.*` | bool | `true` | Show or hide individual metrics |
+| `colors.*` | string | varies | Rich color names for metrics |
 
-If `config.json` is missing or contains a parse error, the built-in defaults are used and an error is printed to stderr.
+If `config.json` is missing or invalid, built-in defaults are used.
 
-## File layout
+## How It Works
 
-```
-macmonitor.py        — single-file script, no package structure needed
-config.json          — user configuration (interval, history, visible panels, colors, dot char)
+| Component | Source | Notes |
+|-----------|--------|-------|
+| [`macmonitor.py`](/Users/cyni/Playground/ECsMM/macmonitor.py) | `psutil` + `sysctl` + `powermetrics` | CLI renderer and shared monitor logic |
+| [`menubar.py`](/Users/cyni/Playground/ECsMM/menubar.py) | `pyobjc` + shared `Monitor` | macOS status bar UI |
+| [`run.sh`](/Users/cyni/Playground/ECsMM/run.sh) | shell helpers | start, stop, inspect, and log menubar mode; launch CLI mode |
+
+### Memory percentage
+
+macOS reports memory differently from Linux. This project uses `total - available` so the displayed used memory and percentage stay consistent with Activity Monitor.
+
+### Network scaling
+
+Network throughput has no fixed maximum, so the bars scale relative to the highest recent value in the history window. The raw bytes per second value is always shown separately.
+
+## File Layout
+
+```text
+macmonitor.py
+menubar.py
+run.sh
+config.json
 requirements.txt
 README.md
 assets/
-  screenshot.png     — terminal screenshot shown above
+  screenshot.png
+  screenshot2.png
 ```
 
 ## License
