@@ -235,12 +235,12 @@ class PowerMetrics:
 
 class Monitor:
     def __init__(self) -> None:
-        self.cpu_h = deque(maxlen=HISTORY)
-        self.gpu_h = deque(maxlen=HISTORY)
-        self.mem_h = deque(maxlen=HISTORY)
-        self.swap_h = deque(maxlen=HISTORY)
-        self.up_h  = deque(maxlen=HISTORY)
-        self.dn_h  = deque(maxlen=HISTORY)
+        self.cpu_h = deque([0.0] * HISTORY, maxlen=HISTORY)
+        self.gpu_h = deque([0.0] * HISTORY, maxlen=HISTORY)
+        self.mem_h = deque([0.0] * HISTORY, maxlen=HISTORY)
+        self.swap_h = deque([0.0] * HISTORY, maxlen=HISTORY)
+        self.up_h  = deque([0.0] * HISTORY, maxlen=HISTORY)
+        self.dn_h  = deque([0.0] * HISTORY, maxlen=HISTORY)
 
         self.cpu_pct    : float           = 0.0
         self.gpu_pct    : Optional[float] = None
