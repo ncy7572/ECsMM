@@ -2,7 +2,7 @@
 """
 macmonitor.py — btop-style macOS System Resource Monitor
 
-Metrics : CPU · GPU · Memory (active/wired/cached) · NET Upload · NET Download
+Metrics : CPU · GPU · Memory (active/wired/cached) · Swap · NET Upload · NET Download
 Refresh : every 3 seconds
 GPU requires sudo (run: sudo python3 macmonitor.py)
 
@@ -37,12 +37,22 @@ CLR = dict(
     cpu        = "green3",
     gpu        = "dark_orange",
     mem        = "gold1",
-    up         = "cyan1",
-    dn         = "medium_purple1",
+    swap       = "khaki3",
+    up         = "medium_purple1",
+    dn         = "cyan1",
     title      = "bright_white",
     dim        = "grey42",
     border     = "grey35",
     dot_empty  = "grey15",
+)
+
+SHOW = dict(
+    cpu  = True,
+    gpu  = True,
+    mem  = True,
+    swap = True,
+    up   = True,
+    dn   = True,
 )
 
 # ── config loader ──────────────────────────────────────────────────────────────
@@ -52,7 +62,7 @@ def load_config() -> None:
     Read config.json from the same directory as this script and apply any
     values it contains, falling back silently to the defaults above.
     """
-    global HISTORY, INTERVAL, DOT, CLR
+    global HISTORY, INTERVAL, DOT, CLR, SHOW
 
     cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
     if not os.path.exists(cfg_path):
@@ -73,6 +83,8 @@ def load_config() -> None:
         DOT = str(cfg["dot"])[:1] or DOT              # single character only
     if "colors" in cfg:
         CLR.update({k: v for k, v in cfg["colors"].items() if k in CLR})
+    if "show" in cfg and isinstance(cfg["show"], dict):
+        SHOW.update({k: bool(v) for k, v in cfg["show"].items() if k in SHOW})
 
 load_config()
 
@@ -122,6 +134,30 @@ def fmt_mem(n: int) -> str:
             return f"{n:.1f} {u}"
         n /= 1024
     return f"{n:.1f} PB"
+
+
+def sysctl_int(name: str) -> Optional[int]:
+    try:
+        r = subprocess.run(
+            ["sysctl", "-n", name],
+            capture_output=True, text=True, timeout=2,
+        )
+        if r.returncode != 0:
+            return None
+        return int(r.stdout.strip())
+    except Exception:
+        return None
+
+
+def memory_pressure_level() -> tuple[Optional[int], str]:
+    level = sysctl_int("kern.memorystatus_vm_pressure_level")
+    labels = {
+        0: "normal",
+        1: "normal",
+        2: "warning",
+        4: "critical",
+    }
+    return level, labels.get(level, f"level {level}" if level is not None else "unknown")
 
 
 def cpu_brand() -> str:
@@ -202,6 +238,7 @@ class Monitor:
         self.cpu_h = deque(maxlen=HISTORY)
         self.gpu_h = deque(maxlen=HISTORY)
         self.mem_h = deque(maxlen=HISTORY)
+        self.swap_h = deque(maxlen=HISTORY)
         self.up_h  = deque(maxlen=HISTORY)
         self.dn_h  = deque(maxlen=HISTORY)
 
@@ -214,6 +251,10 @@ class Monitor:
         self.mem_cached : int   = 0   # inactive / disk-cache pages
         self.mem_used   : int   = 0   # total non-free (active+wired+cached)
         self.mem_tot    : int   = 0
+        self.swap_used  : int   = 0
+        self.swap_tot   : int   = 0
+        self.mem_pressure_raw   : Optional[int] = None
+        self.mem_pressure_level : str = "unknown"
         # network
         self.net_up : float = 0.0
         self.net_dn : float = 0.0
@@ -242,6 +283,11 @@ class Monitor:
         self.mem_used   = m.total - m.available
         self.mem_pct    = self.mem_used / max(self.mem_tot, 1) * 100
         self.mem_h.append(self.mem_pct)
+        s = psutil.swap_memory()
+        self.swap_used = s.used
+        self.swap_tot  = s.total
+        self.swap_h.append(s.percent if s.total else 0.0)
+        self.mem_pressure_raw, self.mem_pressure_level = memory_pressure_level()
 
         # ── Network ───────────────────────────────────────────────────────────
         now = time.monotonic()
@@ -265,18 +311,28 @@ class Monitor:
 
 # ── rendering ──────────────────────────────────────────────────────────────────
 
+def pressure_style(level: Optional[int], base_color: str) -> str:
+    if level == 4:
+        return "bold red1"
+    if level == 2:
+        return "bold dark_orange"
+    return f"bold {base_color}"
+
+
 def _panel(title: str, val_str: str, pct: float,
-           hist: deque, color: str, w: int) -> Panel:
+           hist: deque, color: str, w: int,
+           subtitle_style: Optional[str] = None) -> Panel:
     """Standard metric panel: gradient dot bar + sparkline."""
     inner = w - 6
+    subtitle_style = subtitle_style or f"bold {CLR['title']}"
     body  = dot_bar(pct, inner, color)
     body.append("\n")
-    body.append(sparkline(hist, inner), style=f"dim {color}")
+    body.append(sparkline(hist, inner), style=CLR["dim"])
     return Panel(
         body,
         title          = f"[bold {color}] {title} [/]",
         title_align    = "left",
-        subtitle       = f"[bold {CLR['title']}] {val_str} [/]",
+        subtitle       = f"[{subtitle_style}] {val_str} [/]",
         subtitle_align = "right",
         border_style   = CLR["border"],
         box            = box.ROUNDED,
@@ -290,26 +346,51 @@ def build_screen(mon: Monitor, width: int) -> Group:
         mx = max(max(hist, default=0.0), 1e-9)
         return v / mx * 100
 
-    gpu_v   = mon.gpu_pct if mon.gpu_pct is not None else 0.0
-    gpu_str = f"{gpu_v:5.1f}%" if mon.gpu_pct is not None else "N/A (needs sudo)"
+    gpu_v      = mon.gpu_pct if mon.gpu_pct is not None else 0.0
+    gpu_str    = f"{gpu_v:5.1f}%" if mon.gpu_pct is not None else "N/A (needs sudo)"
+    swap_pct   = mon.swap_used / max(mon.swap_tot, 1) * 100 if mon.swap_tot else 0.0
+    swap_str   = f"{swap_pct:5.1f}%"
+    swap_style = pressure_style(mon.mem_pressure_raw, CLR["swap"])
 
-    panels = [
-        _panel(f"CPU  [{mon.cpu_name}]", f"{mon.cpu_pct:5.1f}%",
-               mon.cpu_pct, mon.cpu_h, CLR["cpu"], width),
+    panels = []
+    if SHOW["cpu"]:
+        panels.append(
+            _panel(f"CPU  [{mon.cpu_name}]", f"{mon.cpu_pct:5.1f}%",
+                   mon.cpu_pct, mon.cpu_h, CLR["cpu"], width)
+        )
 
-        _panel("GPU", gpu_str,
-               gpu_v, mon.gpu_h, CLR["gpu"], width),
+    if SHOW["gpu"]:
+        panels.append(
+            _panel("GPU", gpu_str,
+                   gpu_v, mon.gpu_h, CLR["gpu"], width)
+        )
 
-        _panel(f"MEM  {fmt_mem(mon.mem_used)} / {fmt_mem(mon.mem_tot)}",
-               f"{mon.mem_pct:5.1f}%",
-               mon.mem_pct, mon.mem_h, CLR["mem"], width),
+    if SHOW["mem"]:
+        panels.append(
+            _panel(f"MEM  {fmt_mem(mon.mem_used)} / {fmt_mem(mon.mem_tot)}",
+                   f"{mon.mem_pct:5.1f}%",
+                   mon.mem_pct, mon.mem_h, CLR["mem"], width)
+        )
 
-        _panel("NET ↑  Upload", fmt_bps(mon.net_up),
-               rel_pct(mon.net_up, mon.up_h), mon.up_h, CLR["up"], width),
+    if SHOW["swap"]:
+        panels.append(
+            _panel(f"SWAP  {fmt_mem(mon.swap_used)} / {fmt_mem(mon.swap_tot)}",
+                   swap_str,
+                   swap_pct, mon.swap_h, CLR["swap"], width,
+                   subtitle_style=swap_style)
+        )
 
-        _panel("NET ↓  Download", fmt_bps(mon.net_dn),
-               rel_pct(mon.net_dn, mon.dn_h), mon.dn_h, CLR["dn"], width),
-    ]
+    if SHOW["up"]:
+        panels.append(
+            _panel("NET ↑  Upload", fmt_bps(mon.net_up),
+                   rel_pct(mon.net_up, mon.up_h), mon.up_h, CLR["up"], width)
+        )
+
+    if SHOW["dn"]:
+        panels.append(
+            _panel("NET ↓  Download", fmt_bps(mon.net_dn),
+                   rel_pct(mon.net_dn, mon.dn_h), mon.dn_h, CLR["dn"], width)
+        )
 
     ts  = time.strftime("%H:%M:%S")
     hdr = Text()

@@ -19,6 +19,10 @@ A lightweight, macOS system (Mac silicon M-Series) resource monitor for the term
 │ ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ │
 │ ▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃▃ │
 ╰──────────────────────────────────────────────────────────────────╯
+╭─ SWAP  1.4 GB / 10.0 GB ──────────────────────────────── 14.0% ─╮
+│ ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ │
+│ ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁ │
+╰──────────────────────────────────────────────────────────────────╯
 ╭─ NET ↑  Upload ──────────────────────────────────── 682.3 B /s ─╮
 │ ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ │
 │ ▁▁▂▃▄▅▆▇▇▆▅▄▃▂▁▁▂▃▄▅▆▇▇▆▅▄▃▂▁▁▂▃▄▅▆▇▇▆▅▄▃▂▁▁▂▃▄▅▆▇▇▆▅ │
@@ -35,7 +39,9 @@ A lightweight, macOS system (Mac silicon M-Series) resource monitor for the term
 - **CPU** — overall usage % with chip model name (e.g. M3 Pro)
 - **GPU** — hardware active residency % via `powermetrics` (requires sudo)
 - **Memory** — used / total in GB; percentage based on `total − available` (includes compressed memory, consistent with macOS Activity Monitor)
+- **Swap** — dedicated swap usage bar; subtitle percentage color reflects macOS memory pressure level
 - **Network Upload / Download** — live bytes/s, auto-scales to the peak seen in the rolling history window
+- **Per-bar visibility** — each panel can be shown or hidden in `config.json`
 - **Gradient dot bars** — each bar uses `■` characters with a bright leading edge
 - **Sparkline history** — 80-sample rolling chart below every bar
 - Refreshes every **3 seconds**; runs in full-screen terminal mode
@@ -78,7 +84,7 @@ Then run `python3 macmonitor.py` without sudo — it will use `sudo -n` (non-int
 | Component | Source | Notes |
 |-----------|--------|-------|
 | `PowerMetrics` | `sudo powermetrics --samplers gpu_power` | Background thread; parses GPU HW active residency from stdout |
-| `Monitor` | `psutil` | Collects CPU %, memory, and net I/O on each 3 s tick |
+| `Monitor` | `psutil` + `sysctl kern.memorystatus_vm_pressure_level` | Collects CPU %, memory, swap, memory pressure level, and net I/O on each tick |
 | `dot_bar()` | rendering | Builds a `rich.Text` of `■` characters; first 35 % at normal brightness, last 65 % bold (bright tip) |
 | `sparkline()` | rendering | Maps the last 80 values to `▁▂▃▄▅▆▇█` scaled to the rolling max |
 | `build_screen()` | rendering | Composes all panels into a `rich.Group` rendered via `rich.Live` |
@@ -86,6 +92,19 @@ Then run `python3 macmonitor.py` without sudo — it will use `sudo -n` (non-int
 ### Memory percentage
 
 macOS memory is reported differently from Linux. `psutil.virtual_memory().used` only counts **active + wired** pages; the `percent` field uses `(total − available) / total`, which also includes **cached/inactive** and **compressed** pages. macmonitor uses `total − available` for both the GB label and the percentage so the two numbers are always consistent and match Activity Monitor.
+
+### Swap and pressure
+
+The swap panel shows:
+
+- **swap used / total** from `psutil.swap_memory()`
+- **pressure level** from `sysctl kern.memorystatus_vm_pressure_level`, encoded by the subtitle percentage color
+
+Pressure uses the standard macOS levels:
+
+- normal: swap percentage uses the panel's normal color
+- warning: swap percentage turns orange
+- critical: swap percentage turns red
 
 ### Network scaling
 
@@ -102,12 +121,22 @@ Changes take effect on the next run.
   "history":  80,
   "dot":      "■",
 
+  "show": {
+    "cpu":  true,
+    "gpu":  true,
+    "mem":  true,
+    "swap": true,
+    "up":   true,
+    "dn":   true
+  },
+
   "colors": {
     "cpu":       "green3",
     "gpu":       "dark_orange",
     "mem":       "gold1",
-    "up":        "cyan1",
-    "dn":        "medium_purple1",
+    "swap":      "khaki3",
+    "up":        "medium_purple1",
+    "dn":        "cyan1",
     "border":    "grey35",
     "dot_empty": "grey15"
   }
@@ -119,6 +148,7 @@ Changes take effect on the next run.
 | `interval` | float | `3.0` | Seconds between refreshes (minimum `0.5`) |
 | `history` | int | `80` | Chart points kept per metric (~4 min at 3 s) |
 | `dot` | string | `"■"` | Bar character — try `"●"`, `"▪"`, `"•"` |
+| `show.*` | bool | `true` | Show or hide individual panels: `cpu`, `gpu`, `mem`, `swap`, `up`, `dn` |
 | `colors.*` | string | — | [Rich colour name](https://rich.readthedocs.io/en/latest/appendix/colors.html) for each metric |
 
 If `config.json` is missing or contains a parse error, the built-in defaults are used and an error is printed to stderr.
@@ -127,7 +157,7 @@ If `config.json` is missing or contains a parse error, the built-in defaults are
 
 ```
 macmonitor.py        — single-file script, no package structure needed
-config.json          — user configuration (interval, history, colors, dot char)
+config.json          — user configuration (interval, history, visible panels, colors, dot char)
 requirements.txt
 README.md
 assets/

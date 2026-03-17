@@ -5,12 +5,22 @@
   "history":  90,
   "dot":      "■",
 
+  "show": {
+    "cpu":  true,
+    "gpu":  true,
+    "mem":  true,
+    "swap": true,
+    "up":   true,
+    "dn":   true
+  },
+
   "colors": {
     "cpu":       "green3",
     "gpu":       "dark_orange",
     "mem":       "gold1",
-    "up":        "cyan1",
-    "dn":        "medium_purple1",
+    "swap":      "khaki3",
+    "up":        "medium_purple1",
+    "dn":        "cyan1",
     "title":     "bright_white",
     "dim":       "grey42",
     "border":    "grey35",
