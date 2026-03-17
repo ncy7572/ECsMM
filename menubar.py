@@ -21,6 +21,8 @@ try:
         NSApp,
         NSApplication,
         NSApplicationActivationPolicyAccessory,
+        NSAppearanceNameAqua,
+        NSAppearanceNameDarkAqua,
         NSBezierPath,
         NSButton,
         NSColor,
@@ -42,6 +44,68 @@ except ImportError:
 from rich.color import Color
 
 from macmonitor import CLR, INTERVAL, Monitor, SHOW, fmt_bps, fmt_mem
+
+
+class Theme:
+    @staticmethod
+    def is_dark(view: Optional[NSView] = None) -> bool:
+        appearance = None
+        if view is not None and hasattr(view, "effectiveAppearance"):
+            appearance = view.effectiveAppearance()
+        if appearance is None and NSApp is not None:
+            appearance = NSApp.effectiveAppearance()
+        if appearance is None:
+            return False
+        match = appearance.bestMatchFromAppearancesWithNames_(
+            [NSAppearanceNameAqua, NSAppearanceNameDarkAqua]
+        )
+        return bool(match == NSAppearanceNameDarkAqua)
+
+    @staticmethod
+    def background(view: Optional[NSView] = None) -> NSColor:
+        if Theme.is_dark(view):
+            return NSColor.colorWithCalibratedRed_green_blue_alpha_(0.115, 0.119, 0.131, 0.97)
+        return NSColor.colorWithCalibratedRed_green_blue_alpha_(0.965, 0.967, 0.975, 0.96)
+
+    @staticmethod
+    def card_background(view: Optional[NSView] = None) -> NSColor:
+        if Theme.is_dark(view):
+            return NSColor.colorWithCalibratedRed_green_blue_alpha_(0.165, 0.171, 0.188, 0.98)
+        return NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.88)
+
+    @staticmethod
+    def text_primary() -> NSColor:
+        return NSColor.labelColor()
+
+    @staticmethod
+    def text_secondary() -> NSColor:
+        return NSColor.secondaryLabelColor()
+
+    @staticmethod
+    def text_inverse() -> NSColor:
+        return NSColor.colorWithCalibratedWhite_alpha_(0.96, 1.0)
+
+    @staticmethod
+    def history_track(view: Optional[NSView] = None) -> NSColor:
+        if Theme.is_dark(view):
+            return NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.10)
+        return NSColor.colorWithCalibratedWhite_alpha_(0.86, 1.0)
+
+    @staticmethod
+    def history_baseline(view: Optional[NSView] = None) -> NSColor:
+        if Theme.is_dark(view):
+            return NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.18)
+        return NSColor.colorWithCalibratedWhite_alpha_(0.76, 1.0)
+
+    @staticmethod
+    def bar_track(view: Optional[NSView] = None) -> NSColor:
+        if Theme.is_dark(view):
+            return NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.14)
+        return NSColor.colorWithCalibratedWhite_alpha_(0.0, 1.0)
+
+    @staticmethod
+    def history_stroke() -> NSColor:
+        return NSColor.separatorColor()
 
 
 def rel_pct(value: float, peak: float) -> float:
@@ -134,7 +198,7 @@ class DashboardView(NSView):
     @objc.python_method
     def _draw_bar(self, x: float, y: float, w: float, h: float, pct: Optional[float], color: NSColor) -> None:
         track = self._rounded_rect(NSMakeRect(x, y, w, h), h / 2)
-        NSColor.colorWithWhite_alpha_(0.0, 1.0).setFill()
+        Theme.bar_track(self).setFill()
         track.fill()
 
         if pct is None:
@@ -152,7 +216,7 @@ class DashboardView(NSView):
         self._draw_text(
             text,
             NSMakeRect(x, label_y, w, label_h),
-            NSColor.colorWithWhite_alpha_(0.96, 1.0),
+            Theme.text_inverse(),
             size=8.5,
             mono=True,
             align=1,
@@ -173,8 +237,8 @@ class DashboardView(NSView):
         count = len(reduced)
         gap = 3.0
         bar_w = max(4.0, (w - gap * (count - 1)) / count)
-        track = NSColor.colorWithCalibratedWhite_alpha_(0.86, 1.0)
-        baseline = NSColor.colorWithCalibratedWhite_alpha_(0.76, 1.0)
+        track = Theme.history_track(self)
+        baseline = Theme.history_baseline(self)
         for idx, val in enumerate(reduced):
             ratio = max(0.0, min(1.0, val / mx))
             bar_h = max(2.5, ratio * h)
@@ -190,7 +254,7 @@ class DashboardView(NSView):
             color.colorWithAlphaComponent_(alpha).setFill()
             fg.fill()
 
-            NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.22).setStroke()
+            Theme.history_stroke().colorWithAlphaComponent_(0.4).setStroke()
             fg.setLineWidth_(0.6)
             fg.stroke()
 
@@ -210,7 +274,7 @@ class DashboardView(NSView):
     @objc.python_method
     def _draw_card(self, rect, item: dict) -> None:
         bg = self._rounded_rect(rect, 16.0)
-        NSColor.colorWithWhite_alpha_(1.0, 0.88).setFill()
+        Theme.card_background(self).setFill()
         bg.fill()
 
         pad = 14.0
@@ -222,14 +286,14 @@ class DashboardView(NSView):
         self._draw_text(
             item["title"],
             NSMakeRect(rect.origin.x + pad, title_y, rect.size.width - 110.0, 18.0),
-            NSColor.colorWithWhite_alpha_(0.0, 1.0),
+            Theme.text_primary(),
             size=title_size,
             bold=True,
         )
         self._draw_text(
             item["value"],
             NSMakeRect(rect.origin.x + rect.size.width - 92.0, title_y, 78.0, 18.0),
-            NSColor.colorWithWhite_alpha_(0.0, 1.0),
+            Theme.text_primary(),
             size=value_size,
             bold=True,
             mono=True,
@@ -249,7 +313,7 @@ class DashboardView(NSView):
                 self._draw_text(
                     item["subtitle"],
                     NSMakeRect(rect.origin.x + pad, bar_y + 12.0, rect.size.width - pad * 2, 14.0),
-                    NSColor.colorWithWhite_alpha_(0.0, 1.0),
+                    Theme.text_secondary(),
                     size=subtitle_size,
                     mono=True,
                 )
@@ -258,27 +322,27 @@ class DashboardView(NSView):
     def drawRect_(self, _rect) -> None:
         bounds = self.bounds()
         outer = self._rounded_rect(bounds, 18.0)
-        NSColor.colorWithCalibratedRed_green_blue_alpha_(0.965, 0.967, 0.975, 0.96).setFill()
+        Theme.background(self).setFill()
         outer.fill()
 
         self._draw_text(
             "MACMONITOR",
             NSMakeRect(16.0, bounds.size.height - 34.0, 140.0, 18.0),
-            NSColor.colorWithWhite_alpha_(0.0, 1.0),
+            Theme.text_primary(),
             size=13.0,
             bold=True,
         )
         self._draw_text(
             self.clock,
             NSMakeRect(bounds.size.width - 110.0, bounds.size.height - 34.0, 90.0, 18.0),
-            NSColor.colorWithWhite_alpha_(0.0, 1.0),
+            Theme.text_primary(),
             size=12.0,
             mono=True,
         )
         self._draw_text(
             self.cpu_name,
             NSMakeRect(16.0, bounds.size.height - 56.0, 200.0, 16.0),
-            NSColor.colorWithWhite_alpha_(0.0, 1.0),
+            Theme.text_secondary(),
             size=12.0,
         )
 
@@ -306,6 +370,7 @@ class DashboardView(NSView):
 class MenuBarApp(NSObject):
     def applicationDidFinishLaunching_(self, _notification) -> None:
         self.monitor = Monitor()
+        self.is_dark_mode = Theme.is_dark()
         self.status_item = NSStatusBar.systemStatusBar().statusItemWithLength_(26.0)
         self.button = self.status_item.button()
         self.button.setToolTip_("CPU / GPU / NET")
@@ -346,6 +411,14 @@ class MenuBarApp(NSObject):
         controller.setView_(root)
         self.popover.setContentSize_((460.0, 430.0))
         self.popover.setContentViewController_(controller)
+
+    @objc.python_method
+    def _refresh_theme(self) -> None:
+        dark = Theme.is_dark(self.button)
+        if dark == getattr(self, "is_dark_mode", None):
+            return
+        self.is_dark_mode = dark
+        self.dashboard.setNeedsDisplay_(True)
 
     @objc.python_method
     def _clock(self) -> str:
@@ -393,7 +466,7 @@ class MenuBarApp(NSObject):
             bg = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
                 NSMakeRect(pad_x, y, bar_w, bar_h), 1.0, 1.0
             )
-            color_for_metric("idle").setFill()
+            Theme.bar_track(self.button).setFill()
             bg.fill()
 
             if pct is not None:
@@ -416,6 +489,7 @@ class MenuBarApp(NSObject):
 
     def refresh_(self, _timer) -> None:
         self.monitor.update()
+        self._refresh_theme()
 
         up_peak = max(self.monitor.up_h, default=0.0)
         dn_peak = max(self.monitor.dn_h, default=0.0)

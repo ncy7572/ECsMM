@@ -116,6 +116,8 @@ It shows three compact activity glyphs in the menu bar:
 - GPU
 - NET
 
+The popover follows the macOS system appearance automatically, so it switches with Light Mode and Dark Mode.
+
 Clicking the status item opens a menu with the current values and a quit action.
 
 Run it with the shell script:
@@ -160,6 +162,7 @@ python3 menubar.py
 - configurable panel visibility in [`config.json`](/Users/cyni/Playground/ECsMM/config.json)
 - rolling sparkline history
 - shell script helpers for launching and managing menubar mode
+- automatic light/dark appearance in menubar mode based on the current macOS system setting
 
 ## Why `sudo` Is Needed For GPU
 
