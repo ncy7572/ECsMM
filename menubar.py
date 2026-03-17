@@ -39,20 +39,38 @@ try:
 except ImportError:
     sys.exit("Missing dependency — run: pip install pyobjc-framework-Cocoa")
 
-from macmonitor import INTERVAL, Monitor, SHOW, fmt_bps, fmt_mem
+from rich.color import Color
+
+from macmonitor import CLR, INTERVAL, Monitor, SHOW, fmt_bps, fmt_mem
 
 
 def rel_pct(value: float, peak: float) -> float:
     return value / max(peak, 1e-9) * 100
 
 
+def _nscolor_from_rich(name: str) -> NSColor:
+    try:
+        triplet = Color.parse(name).get_truecolor()
+    except Exception:
+        triplet = Color.parse("white").get_truecolor()
+    return NSColor.colorWithCalibratedRed_green_blue_alpha_(
+        triplet.red / 255.0,
+        triplet.green / 255.0,
+        triplet.blue / 255.0,
+        1.0,
+    )
+
+
 def color_for_metric(name: str) -> NSColor:
     colors = {
-        "cpu": NSColor.colorWithCalibratedRed_green_blue_alpha_(0.30, 0.67, 0.43, 1.0),
-        "gpu": NSColor.colorWithCalibratedRed_green_blue_alpha_(0.77, 0.53, 0.30, 1.0),
-        "mem": NSColor.colorWithCalibratedRed_green_blue_alpha_(0.76, 0.63, 0.28, 1.0),
-        "net": NSColor.colorWithCalibratedRed_green_blue_alpha_(0.31, 0.63, 0.78, 1.0),
-        "idle": NSColor.secondaryLabelColor(),
+        "cpu": _nscolor_from_rich(CLR["cpu"]),
+        "gpu": _nscolor_from_rich(CLR["gpu"]),
+        "mem": _nscolor_from_rich(CLR["mem"]),
+        "swap": _nscolor_from_rich(CLR["swap"]),
+        "up": _nscolor_from_rich(CLR["up"]),
+        "dn": _nscolor_from_rich(CLR["dn"]),
+        "net": _nscolor_from_rich(CLR["dn"]),
+        "idle": NSColor.colorWithCalibratedWhite_alpha_(0.0, 1.0),
     }
     return colors[name]
 
@@ -116,7 +134,7 @@ class DashboardView(NSView):
     @objc.python_method
     def _draw_bar(self, x: float, y: float, w: float, h: float, pct: Optional[float], color: NSColor) -> None:
         track = self._rounded_rect(NSMakeRect(x, y, w, h), h / 2)
-        NSColor.colorWithWhite_alpha_(0.78, 1.0).setFill()
+        NSColor.colorWithWhite_alpha_(0.0, 1.0).setFill()
         track.fill()
 
         if pct is None:
@@ -134,7 +152,7 @@ class DashboardView(NSView):
         self._draw_text(
             text,
             NSMakeRect(x, label_y, w, label_h),
-            NSColor.colorWithWhite_alpha_(0.10, 1.0),
+            NSColor.colorWithWhite_alpha_(0.96, 1.0),
             size=8.5,
             mono=True,
             align=1,
@@ -182,14 +200,14 @@ class DashboardView(NSView):
         self._draw_text(
             item["title"],
             NSMakeRect(rect.origin.x + pad, title_y, rect.size.width - 110.0, 18.0),
-            item["color"],
+            NSColor.colorWithWhite_alpha_(0.0, 1.0),
             size=title_size,
             bold=True,
         )
         self._draw_text(
             item["value"],
             NSMakeRect(rect.origin.x + rect.size.width - 92.0, title_y, 78.0, 18.0),
-            item["color"],
+            NSColor.colorWithWhite_alpha_(0.0, 1.0),
             size=value_size,
             bold=True,
             mono=True,
@@ -209,7 +227,7 @@ class DashboardView(NSView):
                 self._draw_text(
                     item["subtitle"],
                     NSMakeRect(rect.origin.x + pad, bar_y + 12.0, rect.size.width - pad * 2, 14.0),
-                    NSColor.secondaryLabelColor(),
+                    NSColor.colorWithWhite_alpha_(0.0, 1.0),
                     size=subtitle_size,
                     mono=True,
                 )
@@ -224,21 +242,21 @@ class DashboardView(NSView):
         self._draw_text(
             "MACMONITOR",
             NSMakeRect(16.0, bounds.size.height - 34.0, 140.0, 18.0),
-            NSColor.labelColor(),
+            NSColor.colorWithWhite_alpha_(0.0, 1.0),
             size=13.0,
             bold=True,
         )
         self._draw_text(
             self.clock,
             NSMakeRect(bounds.size.width - 110.0, bounds.size.height - 34.0, 90.0, 18.0),
-            NSColor.secondaryLabelColor(),
+            NSColor.colorWithWhite_alpha_(0.0, 1.0),
             size=12.0,
             mono=True,
         )
         self._draw_text(
             self.cpu_name,
             NSMakeRect(16.0, bounds.size.height - 56.0, 200.0, 16.0),
-            NSColor.secondaryLabelColor(),
+            NSColor.colorWithWhite_alpha_(0.0, 1.0),
             size=12.0,
         )
 
@@ -322,13 +340,13 @@ class MenuBarApp(NSObject):
         if SHOW["gpu"]:
             items.append(dict(title="GPU", value=f"{gpu_pct:5.1f}%" if gpu_pct is not None else "N/A", subtitle="" if gpu_pct is not None else "run with sudo", subtitle_on_bar=False, pct=gpu_pct, hist=self.monitor.gpu_h, color=color_for_metric("gpu")))
         if SHOW["mem"]:
-            items.append(dict(title="MEM", value=f"{self.monitor.mem_pct:5.1f}%", subtitle=overlay_mem_label(self.monitor.mem_used, self.monitor.mem_tot), subtitle_on_bar=True, pct=self.monitor.mem_pct, hist=self.monitor.mem_h, color=color_for_metric("mem")))
+            items.append(dict(title="MEM", value=f"{self.monitor.mem_pct:5.1f}%", subtitle=overlay_mem_label(self.monitor.mem_used, self.monitor.mem_tot), subtitle_on_bar=False, pct=self.monitor.mem_pct, hist=self.monitor.mem_h, color=color_for_metric("mem")))
         if SHOW["swap"]:
-            items.append(dict(title="SWAP", value=f"{swap_pct:5.1f}%", subtitle=overlay_mem_label(self.monitor.swap_used, self.monitor.swap_tot), subtitle_on_bar=True, pct=swap_pct, hist=self.monitor.swap_h, color=color_for_metric("mem")))
+            items.append(dict(title="SWAP", value=f"{swap_pct:5.1f}%", subtitle=overlay_mem_label(self.monitor.swap_used, self.monitor.swap_tot), subtitle_on_bar=False, pct=swap_pct, hist=self.monitor.swap_h, color=color_for_metric("swap")))
         if SHOW["up"]:
-            items.append(dict(title="NET UP", value=fmt_bps(self.monitor.net_up).strip(), subtitle="", subtitle_on_bar=False, pct=net_up_pct, hist=self.monitor.up_h, color=color_for_metric("net")))
+            items.append(dict(title="NET UP", value=fmt_bps(self.monitor.net_up).strip(), subtitle="", subtitle_on_bar=False, pct=net_up_pct, hist=self.monitor.up_h, color=color_for_metric("up")))
         if SHOW["dn"]:
-            items.append(dict(title="NET DN", value=fmt_bps(self.monitor.net_dn).strip(), subtitle="", subtitle_on_bar=False, pct=net_dn_pct, hist=self.monitor.dn_h, color=color_for_metric("net")))
+            items.append(dict(title="NET DN", value=fmt_bps(self.monitor.net_dn).strip(), subtitle="", subtitle_on_bar=False, pct=net_dn_pct, hist=self.monitor.dn_h, color=color_for_metric("dn")))
         return items
 
     @objc.python_method
