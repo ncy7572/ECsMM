@@ -11,7 +11,7 @@ Requirements: pip install rich psutil
 
 from __future__ import annotations
 
-import json, os, re, sys, time, signal, subprocess, threading
+import json, os, re, sys, time, signal, subprocess, threading, select, termios, tty
 import psutil
 from collections import deque
 from typing import Optional
@@ -37,6 +37,7 @@ CLR = dict(
     cpu        = "green3",
     gpu        = "dark_orange",
     mem        = "gold1",
+    mem_cached = "steel_blue3",
     swap       = "khaki3",
     up         = "medium_purple1",
     dn         = "cyan1",
@@ -116,6 +117,25 @@ def dot_bar(pct: float, w: int, color: str) -> Text:
     t.append(DOT * (n - split), style=f"bold {color}")
     # Empty: dark dots
     t.append(DOT * (w - n),     style=CLR["dot_empty"])
+    return t
+
+
+def stacked_dot_bar(segments: list[tuple[float, str]], w: int) -> Text:
+    """Stack percentage segments left-to-right, then fill the remainder."""
+    t = Text()
+    used = 0
+    for pct, color in segments:
+        pct = max(0.0, pct)
+        n = min(w - used, int(pct / 100 * w))
+        if n <= 0:
+            continue
+        split = int(n * 0.35)
+        t.append(DOT * split, style=color)
+        t.append(DOT * (n - split), style=f"bold {color}")
+        used += n
+        if used >= w:
+            break
+    t.append(DOT * max(w - used, 0), style=CLR["dot_empty"])
     return t
 
 
@@ -249,7 +269,8 @@ class Monitor:
         self.mem_active : int   = 0   # recently used pages
         self.mem_wired  : int   = 0   # kernel / pinned pages
         self.mem_cached : int   = 0   # inactive / disk-cache pages
-        self.mem_used   : int   = 0   # total non-free (active+wired+cached)
+        self.mem_app    : int   = 0   # active+wired, excluding reclaimable cache
+        self.mem_used   : int   = 0   # total shown in MEM = app + cached
         self.mem_tot    : int   = 0
         self.swap_used  : int   = 0
         self.swap_tot   : int   = 0
@@ -279,8 +300,8 @@ class Monitor:
         self.mem_wired  = getattr(m, "wired",    0)
         # inactive = disk cache held by OS (reclaimable)
         self.mem_cached = getattr(m, "inactive", 0)
-        # Total "used" = everything that is not free/available
-        self.mem_used   = m.total - m.available
+        self.mem_app    = self.mem_active + self.mem_wired
+        self.mem_used   = min(self.mem_app + self.mem_cached, self.mem_tot)
         self.mem_pct    = self.mem_used / max(self.mem_tot, 1) * 100
         self.mem_h.append(self.mem_pct)
         s = psutil.swap_memory()
@@ -317,6 +338,28 @@ def pressure_style(level: Optional[int], base_color: str) -> str:
     if level == 2:
         return "bold dark_orange"
     return f"bold {base_color}"
+
+
+def pressure_label(level: str) -> str:
+    mapping = {
+        "normal": "Low pressure",
+        "warning": "Warning pressure",
+        "critical": "Critical pressure",
+    }
+    return mapping.get(level, level.replace("_", " ").title())
+
+
+def read_key() -> Optional[str]:
+    """Read one pending keypress without blocking."""
+    if not sys.stdin.isatty():
+        return None
+    ready, _, _ = select.select([sys.stdin], [], [], 0)
+    if not ready:
+        return None
+    try:
+        return sys.stdin.read(1)
+    except Exception:
+        return None
 
 
 def _panel(title: str, val_str: str, pct: float,
@@ -366,15 +409,35 @@ def build_screen(mon: Monitor, width: int) -> Group:
         )
 
     if SHOW["mem"]:
+        mem_inner = width - 6
+        mem_app_pct = mon.mem_app / max(mon.mem_tot, 1) * 100
+        mem_cached_pct = mon.mem_cached / max(mon.mem_tot, 1) * 100
+        mem_body = stacked_dot_bar(
+            [(mem_app_pct, CLR["mem"]), (mem_cached_pct, CLR["mem_cached"])],
+            mem_inner,
+        )
+        mem_body.append("\n")
+        mem_body.append(sparkline(mon.mem_h, mem_inner), style=CLR["dim"])
         panels.append(
-            _panel(f"MEM  {fmt_mem(mon.mem_used)} / {fmt_mem(mon.mem_tot)}",
-                   f"{mon.mem_pct:5.1f}%",
-                   mon.mem_pct, mon.mem_h, CLR["mem"], width)
+            Panel(
+                mem_body,
+                title=(
+                    f"[bold {CLR['mem']}]"
+                    f" MEM  {fmt_mem(mon.mem_used)} / {fmt_mem(mon.mem_tot)}"
+                    f" | CACHE  {fmt_mem(mon.mem_cached)} [/]"
+                ),
+                title_align="left",
+                subtitle=f"[bold {CLR['title']}] {mon.mem_pct:5.1f}% [/]",
+                subtitle_align="right",
+                border_style=CLR["border"],
+                box=box.ROUNDED,
+                padding=(0, 1),
+            )
         )
 
     if SHOW["swap"]:
         panels.append(
-            _panel(f"SWAP  {fmt_mem(mon.swap_used)} / {fmt_mem(mon.swap_tot)}",
+            _panel(f"SWAP  {fmt_mem(mon.swap_used)} / {fmt_mem(mon.swap_tot)} | {pressure_label(mon.mem_pressure_level)}",
                    swap_str,
                    swap_pct, mon.swap_h, CLR["swap"], width,
                    subtitle_style=swap_style)
@@ -393,15 +456,18 @@ def build_screen(mon: Monitor, width: int) -> Group:
         )
 
     ts  = time.strftime("%H:%M:%S")
+    left = "  ECsMM "
+    right = f"  {ts}  "
+    gap = max(width - len(left) - len(right), 1)
     hdr = Text()
-    hdr.append("  macmonitor ",              style="bold bright_white on grey15")
-    hdr.append("  macOS resource monitor  ", style="dim white on grey11")
-    hdr.append(f"  {ts}  ",                 style="bold white on grey15")
+    hdr.append(left,                        style="bold bright_white on grey15")
+    hdr.append(" " * gap,                   style="on grey11")
+    hdr.append(right,                       style="bold white on grey15")
     hdr.append("\n")
 
     sudo_hint = "" if mon.pm.ready else "  ·  run with sudo for GPU"
     ftr = Text(
-        f"  Ctrl-C to quit  ·  refreshes every {INTERVAL:.0f}s{sudo_hint}\n",
+        f"  press q or Ctrl-C to quit  ·  refreshes every {INTERVAL:.0f}s{sudo_hint}\n",
         style=CLR["dim"],
     )
 
@@ -413,26 +479,45 @@ def build_screen(mon: Monitor, width: int) -> Group:
 def main() -> None:
     console = Console()
     mon     = Monitor()
+    stdin_fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+    old_term = termios.tcgetattr(stdin_fd) if stdin_fd is not None else None
 
     def _exit(sig, _frame):
         mon.stop()
+        if stdin_fd is not None and old_term is not None:
+            termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_term)
         sys.exit(0)
 
     signal.signal(signal.SIGINT,  _exit)
     signal.signal(signal.SIGTERM, _exit)
 
     mon.update()
+    next_metrics_at = time.monotonic() + INTERVAL
 
-    with Live(
-        build_screen(mon, console.width),
-        console            = console,
-        refresh_per_second = 4,
-        screen             = True,
-    ) as live:
-        while True:
-            time.sleep(INTERVAL)
-            mon.update()
-            live.update(build_screen(mon, console.width))
+    if stdin_fd is not None:
+        tty.setcbreak(stdin_fd)
+
+    try:
+        with Live(
+            build_screen(mon, console.width),
+            console            = console,
+            refresh_per_second = 4,
+            screen             = True,
+        ) as live:
+            while True:
+                time.sleep(1.0)
+                key = read_key()
+                if key in ("q", "Q"):
+                    break
+                now = time.monotonic()
+                if now >= next_metrics_at:
+                    mon.update()
+                    next_metrics_at = now + INTERVAL
+                live.update(build_screen(mon, console.width))
+    finally:
+        mon.stop()
+        if stdin_fd is not None and old_term is not None:
+            termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_term)
 
 
 if __name__ == "__main__":

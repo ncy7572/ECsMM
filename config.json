@@ -18,6 +18,7 @@
     "cpu":       "green3",
     "gpu":       "dark_orange",
     "mem":       "gold1",
+    "mem_cached":"steel_blue3",
     "swap":      "khaki3",
     "up":        "medium_purple1",
     "dn":        "cyan1",

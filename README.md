@@ -77,7 +77,7 @@ Notes:
 - quit with `Ctrl-C`
 
 ```
-  macmonitor   macOS resource monitor   11:02:33
+  ECsMM   11:02:33
 
 ╭─ CPU  [M3 Pro] ──────────────────────────────────────── 15.6% ─╮
 │ ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■ │
@@ -231,7 +231,11 @@ If `config.json` is missing or invalid, built-in defaults are used.
 
 ### Memory percentage
 
-macOS reports memory differently from Linux. This project uses `total - available` so the displayed used memory and percentage stay consistent with Activity Monitor.
+The CLI memory bar is stacked: `app` memory uses the main MEM color, and reclaimable `cache` is drawn on top with a second color. The panel title shows `MEM used / total | CACHE cached`, while the right side shows only the usage percentage.
+
+### Swap pressure
+
+The SWAP panel title includes the current memory pressure state inline, for example `SWAP  1.8 GB / 3.0 GB | Low pressure`.
 
 ### Network scaling
 
