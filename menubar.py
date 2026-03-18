@@ -50,10 +50,10 @@ class Theme:
     @staticmethod
     def is_dark(view: Optional[NSView] = None) -> bool:
         appearance = None
-        if view is not None and hasattr(view, "effectiveAppearance"):
-            appearance = view.effectiveAppearance()
-        if appearance is None and NSApp is not None:
+        if NSApp is not None:
             appearance = NSApp.effectiveAppearance()
+        if appearance is None and view is not None and hasattr(view, "effectiveAppearance"):
+            appearance = view.effectiveAppearance()
         if appearance is None:
             return False
         match = appearance.bestMatchFromAppearancesWithNames_(
@@ -102,6 +102,12 @@ class Theme:
         if Theme.is_dark(view):
             return NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.14)
         return NSColor.colorWithCalibratedWhite_alpha_(0.0, 1.0)
+
+    @staticmethod
+    def icon_bar_track(is_dark: bool) -> NSColor:
+        if is_dark:
+            return NSColor.colorWithCalibratedWhite_alpha_(1.0, 0.18)
+        return NSColor.colorWithCalibratedWhite_alpha_(0.0, 0.72)
 
     @staticmethod
     def history_stroke() -> NSColor:
@@ -414,11 +420,12 @@ class MenuBarApp(NSObject):
 
     @objc.python_method
     def _refresh_theme(self) -> None:
-        dark = Theme.is_dark(self.button)
+        dark = Theme.is_dark()
         if dark == getattr(self, "is_dark_mode", None):
             return
         self.is_dark_mode = dark
         self.dashboard.setNeedsDisplay_(True)
+        self.button.setNeedsDisplay_(True)
 
     @objc.python_method
     def _clock(self) -> str:
@@ -466,7 +473,7 @@ class MenuBarApp(NSObject):
             bg = NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
                 NSMakeRect(pad_x, y, bar_w, bar_h), 1.0, 1.0
             )
-            Theme.bar_track(self.button).setFill()
+            Theme.icon_bar_track(self.is_dark_mode).setFill()
             bg.fill()
 
             if pct is not None:
@@ -486,6 +493,7 @@ class MenuBarApp(NSObject):
     def _set_icon(self, cpu_pct: float, gpu_pct: Optional[float], net_pct: float) -> None:
         self.button.setTitle_("")
         self.button.setImage_(self._bar_image(cpu_pct, gpu_pct, net_pct))
+        self.button.setNeedsDisplay_(True)
 
     def refresh_(self, _timer) -> None:
         self.monitor.update()
